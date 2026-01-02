@@ -40,6 +40,7 @@ export interface LearningPlan {
 }
 
 export interface UserProfile {
+  userId?: string
   age: number
   gradeLevel: string
   diagnosedConditions: {
