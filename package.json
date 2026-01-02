@@ -26,7 +26,16 @@
     "react-hot-toast": "^2.4.0",
     "lucide-react": "^0.294.0",
     "next-auth": "^5.0.0-beta.4",
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "^2.39.0",
+    "webgazer": "^3.1.0",
+    "meyda": "^5.6.2",
+    "@tensorflow/tfjs": "^4.15.0",
+    "@tensorflow/tfjs-node": "^4.15.0",
+    "@tensorflow-models/blazeface": "^0.0.7",
+    "face-api.js": "^0.22.2",
+    "@mediapipe/hands": "^0.4.1646424915",
+    "@mediapipe/camera_utils": "^0.3.1632432234",
+    "@mediapipe/drawing_utils": "^0.3.1620248257"
   },
   "devDependencies": {
     "eslint": "^8.0.0",
