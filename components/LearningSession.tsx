@@ -4,8 +4,12 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Heart, Brain, Trophy, Star } from 'lucide-react'
 import { getCurrentLearnerModel } from '@/lib/learnerModel'
+import { NumberSenseGame, MagnitudeComparisonGame } from './MathGames'
+import { WorkingMemoryGame, AttentionGame, ProcessingSpeedGame } from './CognitiveGames'
+import { getAttentionCheckSystem, resetAttentionCheckSystem } from '@/lib/attentionCheck'
+import { getResearchDataCollector } from '@/lib/researchDataPipeline'
 
-type SessionPhase = 'mood-check' | 'calibration' | 'learning-game' | 'cognitive-game' | 'reflection' | 'reward'
+type SessionPhase = 'mood-check' | 'calibration' | 'learning-game' | 'cognitive-game' | 'attention-check' | 'reflection' | 'reward'
 
 interface SessionData {
   sessionId: string
@@ -187,6 +191,57 @@ function CalibrationGame({ difficulty, onComplete }: CalibrationGameProps) {
   )
 }
 
+interface AttentionCheckProps {
+  onComplete: (passed: boolean, responseTime: number) => void
+}
+
+function AttentionCheckComponent({ onComplete }: AttentionCheckProps) {
+  const [startTime] = useState(Date.now())
+  const attentionSystem = getAttentionCheckSystem()
+  const check = attentionSystem.generateSimpleCheck()
+
+  const handleAnswer = (answer: string | number) => {
+    const responseTime = Date.now() - startTime
+    const result = attentionSystem.recordCheck(
+      answer,
+      check.correctAnswer,
+      responseTime,
+      'simple'
+    )
+    onComplete(result.passed, responseTime)
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-yellow-100 to-orange-100 p-6">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-white rounded-3xl shadow-2xl p-8 max-w-2xl w-full"
+      >
+        <div className="text-center mb-8">
+          <div className="text-6xl mb-4">⚡</div>
+          <h2 className="text-3xl font-bold text-gray-800 mb-4">Quick Check!</h2>
+          <p className="text-xl text-gray-700">{check.question}</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          {check.options.map((option, i) => (
+            <motion.button
+              key={i}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => handleAnswer(option)}
+              className="bg-gradient-to-r from-yellow-400 to-orange-400 text-white text-2xl font-bold py-6 px-8 rounded-2xl shadow-lg hover:shadow-xl transition-all"
+            >
+              {option}
+            </motion.button>
+          ))}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 interface ReflectionProps {
   sessionAccuracy: number
   onComplete: (reflection: string) => void
@@ -331,6 +386,27 @@ export default function LearningSession({ userId, onSessionComplete }: { userId:
   })
 
   const [phaseData, setPhaseData] = useState<any>({})
+  const [attentionCheckCount, setAttentionCheckCount] = useState(0)
+  const [gameChoice, setGameChoice] = useState<{
+    math: 'number-sense' | 'magnitude'
+    cognitive: 'memory' | 'attention' | 'speed'
+  }>({
+    math: Math.random() > 0.5 ? 'number-sense' : 'magnitude',
+    cognitive: ['memory', 'attention', 'speed'][Math.floor(Math.random() * 3)] as any,
+  })
+
+  // Initialize data collection on mount
+  useEffect(() => {
+    const dataCollector = getResearchDataCollector()
+    resetAttentionCheckSystem()
+
+    dataCollector.startSession({
+      sessionId: sessionData.sessionId,
+      userId,
+      preMoodRating: sessionData.moodRating,
+      preConfidenceRating: sessionData.confidenceRating,
+    })
+  }, [])
 
   const handleMoodComplete = (mood: number, confidence: number) => {
     setSessionData({
@@ -352,21 +428,123 @@ export default function LearningSession({ userId, onSessionComplete }: { userId:
   }
 
   const handleLearningGameComplete = (gameData: any) => {
-    setPhaseData({ ...phaseData, learningGameData: gameData })
-    setSessionData({
-      ...sessionData,
-      currentPhase: 'cognitive-game',
-      phaseStartTime: Date.now(),
+    const dataCollector = getResearchDataCollector()
+    const attentionSystem = getAttentionCheckSystem()
+
+    // Record game events
+    gameData.forEach((result: any, index: number) => {
+      dataCollector.recordEvent({
+        pseudoId: dataCollector.generatePseudonymousId(userId),
+        sessionId: sessionData.sessionId,
+        eventType: 'answer_submit',
+        eventData: {
+          correct: result.correct,
+          responseTime: result.responseTime,
+          hintsUsed: result.hintsUsed || 0,
+        },
+        metadata: {
+          difficulty: getCurrentLearnerModel()?.getModel().currentDifficulty || 3,
+          sessionPhase: 'learning-game',
+          taskType: gameChoice.math,
+        },
+      })
+
+      attentionSystem.recordResponse(result.responseTime)
+      attentionSystem.recordInteraction()
     })
+
+    setPhaseData({ ...phaseData, learningGameData: gameData })
+
+    // Randomly inject attention check (50% chance after learning game)
+    if (attentionCheckCount < 2 && Math.random() > 0.5) {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'attention-check',
+        phaseStartTime: Date.now(),
+      })
+    } else {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'cognitive-game',
+        phaseStartTime: Date.now(),
+      })
+    }
   }
 
   const handleCognitiveGameComplete = (cognitiveData: any) => {
-    setPhaseData({ ...phaseData, cognitiveData })
-    setSessionData({
-      ...sessionData,
-      currentPhase: 'reflection',
-      phaseStartTime: Date.now(),
+    const dataCollector = getResearchDataCollector()
+
+    // Record cognitive game results
+    dataCollector.recordEvent({
+      pseudoId: dataCollector.generatePseudonymousId(userId),
+      sessionId: sessionData.sessionId,
+      eventType: 'answer_submit',
+      eventData: {
+        score: cognitiveData.score,
+        accuracy: cognitiveData.accuracy,
+        responseTime: cognitiveData.responseTime,
+      },
+      metadata: {
+        difficulty: getCurrentLearnerModel()?.getModel().currentDifficulty || 3,
+        sessionPhase: 'cognitive-game',
+        taskType: gameChoice.cognitive,
+      },
     })
+
+    setPhaseData({ ...phaseData, cognitiveData })
+
+    // Inject attention check if we haven't done 2 yet
+    if (attentionCheckCount < 2) {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'attention-check',
+        phaseStartTime: Date.now(),
+      })
+    } else {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'reflection',
+        phaseStartTime: Date.now(),
+      })
+    }
+  }
+
+  const handleAttentionCheckComplete = (passed: boolean, responseTime: number) => {
+    const dataCollector = getResearchDataCollector()
+    const attentionSystem = getAttentionCheckSystem()
+
+    // Record attention check
+    dataCollector.recordEvent({
+      pseudoId: dataCollector.generatePseudonymousId(userId),
+      sessionId: sessionData.sessionId,
+      eventType: 'attention_check',
+      eventData: {
+        passed,
+        responseTime,
+      },
+      metadata: {
+        difficulty: getCurrentLearnerModel()?.getModel().currentDifficulty || 3,
+        sessionPhase: 'attention-check',
+        taskType: 'attention-validation',
+      },
+    })
+
+    setAttentionCheckCount(attentionCheckCount + 1)
+
+    // Continue to next phase based on where we were
+    if (phaseData.learningGameData && !phaseData.cognitiveData) {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'cognitive-game',
+        phaseStartTime: Date.now(),
+      })
+    } else {
+      setSessionData({
+        ...sessionData,
+        currentPhase: 'reflection',
+        phaseStartTime: Date.now(),
+      })
+    }
   }
 
   const handleReflectionComplete = (reflection: string) => {
@@ -379,28 +557,77 @@ export default function LearningSession({ userId, onSessionComplete }: { userId:
   }
 
   const handleRewardComplete = () => {
-    // Submit session data to backend
+    const dataCollector = getResearchDataCollector()
+    const attentionSystem = getAttentionCheckSystem()
     const learnerModel = getCurrentLearnerModel()
+
+    // Calculate session metrics
+    const learningGameResults = phaseData.learningGameData || []
+    const accuracy = learningGameResults.length > 0
+      ? (learningGameResults.filter((r: any) => r.correct).length / learningGameResults.length) * 100
+      : 0
+
+    const avgResponseTime = learningGameResults.length > 0
+      ? learningGameResults.reduce((sum: number, r: any) => sum + r.responseTime, 0) / learningGameResults.length
+      : 0
+
+    // Update learner model
     if (learnerModel) {
       learnerModel.updateFromSession({
-        accuracy: phaseData.calibrationAccuracy || 0,
-        responseTimes: phaseData.calibrationTimes || [],
+        accuracy,
+        responseTimes: learningGameResults.map((r: any) => r.responseTime),
         errorTypes: [],
         mouseData: {},
         cognitiveScores: phaseData.cognitiveData || {},
         affectiveInputs: {
           confidence: sessionData.confidenceRating,
         },
-        tasksCompleted: 10,
+        tasksCompleted: learningGameResults.length,
         reflections: [phaseData.reflection || ''],
       })
     }
+
+    // Get attention validation
+    const qualityMetrics = attentionSystem.evaluateSessionQuality()
+
+    // Complete session record
+    dataCollector.completeSession(sessionData.sessionId, {
+      accuracy,
+      taskCount: learningGameResults.length,
+      completionRate: 100,
+      workingMemoryScore: phaseData.cognitiveData?.score || 0,
+      attentionScore: qualityMetrics.attentionScore,
+      processingSpeed: phaseData.cognitiveData?.responseTime || 0,
+      postMoodRating: sessionData.moodRating, // Could add post-mood check
+      postConfidenceRating: sessionData.confidenceRating,
+      focusTime: Date.now() - sessionData.startTime,
+      totalInteractions: learningGameResults.length + (phaseData.cognitiveData ? 1 : 0),
+      avgResponseTime,
+      hesitationCount: learningGameResults.filter((r: any) => r.hintsUsed > 0).length,
+      attentionChecksPassed: qualityMetrics.attentionChecksPassed,
+      attentionChecksFailed: qualityMetrics.attentionChecksFailed,
+      isValidSession: qualityMetrics.isValidSession,
+      qualityFlags: qualityMetrics.qualityFlags,
+      reflectionResponses: [phaseData.reflection || ''],
+    })
+
+    // Log session summary (for debugging/research)
+    console.log('Session Complete:', {
+      sessionId: sessionData.sessionId,
+      accuracy,
+      attentionScore: qualityMetrics.attentionScore,
+      isValid: qualityMetrics.isValidSession,
+    })
 
     onSessionComplete()
   }
 
   const learnerModel = getCurrentLearnerModel()
   const difficulty = learnerModel?.getModel().currentDifficulty || 3
+
+  const learnerModelData = learnerModel?.getModel()
+  const hintFrequency = learnerModelData?.hintFrequency || 0.5
+  const feedbackTone = learnerModelData?.feedbackTone || 'encouraging'
 
   return (
     <AnimatePresence mode="wait">
@@ -414,10 +641,53 @@ export default function LearningSession({ userId, onSessionComplete }: { userId:
         />
       )}
       {sessionData.currentPhase === 'learning-game' && (
-        <div>Learning Game (To be implemented)</div>
+        <>
+          {gameChoice.math === 'number-sense' ? (
+            <NumberSenseGame
+              difficulty={difficulty}
+              hintFrequency={hintFrequency}
+              feedbackTone={feedbackTone}
+              duration={360000} // 6 minutes
+              onComplete={handleLearningGameComplete}
+            />
+          ) : (
+            <MagnitudeComparisonGame
+              difficulty={difficulty}
+              hintFrequency={hintFrequency}
+              feedbackTone={feedbackTone}
+              duration={360000} // 6 minutes
+              onComplete={handleLearningGameComplete}
+            />
+          )}
+        </>
       )}
       {sessionData.currentPhase === 'cognitive-game' && (
-        <div>Cognitive Game (To be implemented)</div>
+        <>
+          {gameChoice.cognitive === 'memory' && (
+            <WorkingMemoryGame
+              difficulty={difficulty}
+              duration={120000} // 2 minutes
+              onComplete={handleCognitiveGameComplete}
+            />
+          )}
+          {gameChoice.cognitive === 'attention' && (
+            <AttentionGame
+              difficulty={difficulty}
+              duration={120000} // 2 minutes
+              onComplete={handleCognitiveGameComplete}
+            />
+          )}
+          {gameChoice.cognitive === 'speed' && (
+            <ProcessingSpeedGame
+              difficulty={difficulty}
+              duration={120000} // 2 minutes
+              onComplete={handleCognitiveGameComplete}
+            />
+          )}
+        </>
+      )}
+      {sessionData.currentPhase === 'attention-check' && (
+        <AttentionCheckComponent onComplete={handleAttentionCheckComplete} />
       )}
       {sessionData.currentPhase === 'reflection' && (
         <Reflection
@@ -429,7 +699,7 @@ export default function LearningSession({ userId, onSessionComplete }: { userId:
         <RewardScreen
           coinsEarned={50}
           badgesEarned={['First Session']}
-          streakDays={learnerModel?.getModel().consecutiveDays || 1}
+          streakDays={learnerModelData?.consecutiveDays || 1}
           onComplete={handleRewardComplete}
         />
       )}
