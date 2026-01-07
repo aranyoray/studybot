@@ -1,7 +1,7 @@
 {
-  "name": "math-intervention-app",
-  "version": "1.0.0",
-  "description": "AI-Native, Gamified Math App for Dyscalculia & Math Anxiety",
+  "name": "neurlearning-companion",
+  "version": "2.0.0",
+  "description": "AI-Native Learning Companion - Cognitive-Emotional Learning System for Diverse Learners",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
